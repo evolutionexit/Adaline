@@ -6,7 +6,7 @@
 
 ## What is this?
 
-ZeroBoot lets you take full control of a machine's keyboard remotely, even before an OS is running. A Raspberry Pi Pico W plugged into the target machine emulates a USB HID keyboard. A web dashboard lets you send keystrokes and macro sequences from anywhere in the world. A Raspberry Pi 5 bridges the two, translating dashboard commands into UDP packets the Pico W executes.
+Adaline lets you take full control of a machine's keyboard remotely, even before an OS is running. A Raspberry Pi Pico W plugged into the target machine emulates a USB HID keyboard. A web dashboard lets you send keystrokes and macro sequences from anywhere in the world. A Raspberry Pi 5 bridges the two, translating dashboard commands into UDP packets the Pico W executes.
 
 **Typical use case:** a family member's PC is completely dead. You mail them a Pico W, they plug it in, and you walk the machine through a full OS install from your browser — no phone support, no USB drive, no technical knowledge required on their end.
 
@@ -49,7 +49,7 @@ The dashboard is hosted on Cloudflare Pages at `pi.mmoors.me`. It connects to th
 ## Repository Structure
 
 ```
-zeroboot/
+Adaline/
 ├── pico/                     # Raspberry Pi Pico W firmware (C)
 │   ├── stacking.c                # Main logic: WiFi, UDP, HID injection
 │   ├── usb_descriptors.c         # TinyUSB HID descriptor setup
@@ -121,8 +121,8 @@ Connects to `wss://mqtt.mmoors.me` in production and `ws://192.168.0.11:9001` in
 
 ```bash
 # Clone the repo with submodules
-git clone --recurse-submodules https://github.com/evolutionexit/zeroboot
-cd zeroboot/pico
+git clone --recurse-submodules https://github.com/evolutionexit/Adaline
+cd Adaline/pico
 
 # Copy and fill in WiFi credentials
 cp wifi_config_example.h wifi_config.h
@@ -148,14 +148,14 @@ sudo systemctl start mosquitto
 pip install paho-mqtt
 
 # Run the bridge
-cd zeroboot/rpi
+cd Adaline/rpi
 python bridge.py
 ```
 
 ### Dashboard
 
 ```bash
-cd zeroboot/dashboard
+cd Adaline/dashboard
 npm install
 npm run dev
 # → http://localhost:5173 (connects to RPi 5 at ws://192.168.0.11:9001)
