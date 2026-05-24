@@ -1,0 +1,21 @@
+# --- Build Output ---
+# Ignore the entire build folder (contains your .uf2, .elf, and object files)
+build/
+
+# --- Private Configs ---
+# Ignore your actual Wi-Fi passwords and IP settings
+wifi_config.h
+
+# --- SDK & Submodules ---
+# We ignore the folder content because Git tracks the submodule via .gitmodules
+pico-sdk/
+
+# --- VS Code ---
+# Do NOT ignore .vscode/ itself, but ignore the temporary IntelliSense database
+.vscode/ipch/
+.vscode/.browse.vc.db
+.vscode/cmake-kits.json
+
+# --- OS Junk ---
+.DS_Store
+Thumbs.db
