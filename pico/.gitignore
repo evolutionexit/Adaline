@@ -8,7 +8,7 @@ wifi_config.h
 
 # --- SDK & Submodules ---
 # We ignore the folder content because Git tracks the submodule via .gitmodules
-pico-sdk/
+
 
 # --- VS Code ---
 # Do NOT ignore .vscode/ itself, but ignore the temporary IntelliSense database
