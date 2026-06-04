@@ -55,6 +55,8 @@ static bool msg_received_udp = false;
 static int hid_char_index = -1;  // -1 = idle, >= 0 = sending
 static bool hid_key_down = false;
 
+static uint8_t current_seq_id = 0;
+
 
 int wifi_connect_rc = -1;
 
@@ -245,8 +247,9 @@ void hid_task(void) {
 
     if (msg_received_hid && !is_pressed) {
         // STEP 1: Send the Press
-        uint8_t modifier = (uint8_t)udp_buf[0];
-        uint8_t keycodes[6] = { (uint8_t)udp_buf[1], 0, 0, 0, 0, 0 };
+        current_seq_id = (uint8_t)udp_buf[0];
+        uint8_t modifier = (uint8_t)udp_buf[1];
+        uint8_t keycodes[6] = { (uint8_t)udp_buf[2], 0, 0, 0, 0, 0 };
         
         tud_hid_keyboard_report(REPORT_ID_KEYBOARD, modifier, keycodes);
         
@@ -269,8 +272,7 @@ void hid_task(void) {
 void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len) {
     if (is_waiting_ack) {
         is_waiting_ack = false;
-        const char *msg = "ACK\n";
-        udp_send_message(RECEIVER_IP, RECEIVER_PORT, msg, strlen(msg));
+        udp_send_message(RECEIVER_IP, RECEIVER_PORT, &current_seq_id, 1);
     }
 }
 
