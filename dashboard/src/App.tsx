@@ -1,6 +1,6 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import { LangProvider } from '../i18n/LangContext'
-import Home from './Home'
+import Home from './Home.jsx'
 import './index.css'
 
 export default function App() {

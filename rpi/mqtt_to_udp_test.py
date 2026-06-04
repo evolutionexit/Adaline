@@ -1,5 +1,11 @@
 # TO DO : add consumer control keys handling
 
+""" packet layout
+
+
+
+
+"""
 
 import paho.mqtt.client as mqtt
 import socket
@@ -105,12 +111,14 @@ udp_sock.settimeout(UDP_TIMEOUT)
 
 
 
-def send_raw_hid(modifier, keycode):
-    packet = bytes([modifier, keycode])
+def send_raw_hid(i, modifier, keycode):
+    packet = bytes([i, modifier, keycode])
     t1 = time.time()
     udp_sock.sendto(packet, (UDP_HOST, UDP_PORT))
     try:
         data, addr = udp_sock.recvfrom(64)
+        if data == i:
+            send_raw_hid(i, modifier, keycode)
         t2 = time.time()
         print(f"RTT: {(t2-t1)*1000:.1f}ms")
     except socket.timeout:
@@ -118,13 +126,13 @@ def send_raw_hid(modifier, keycode):
 
 
 def type_text(text):
-    keycodes =LAYOUTS[current_layout]
-    for char in normalize(text):
-        if char in keycodes:
-            keycode, modifier = keycodes[char]
-            send_raw_hid(modifier, keycode)
+    keycodes = LAYOUTS[current_layout]
+    for i in range(len(normalize(text))):
+        if normalize(text)[i] in keycodes:
+            keycode, modifier = keycodes[normalize(text)[i]]
+            send_raw_hid(i, modifier, keycode)
         else:
-            print(f"Skipping unknown character: '{char}' (U+{ord(char):04X})")
+            print(f"Skipping unknown character: '{normalize(text)[i]}' (U+{ord(normalize(text)[i]):04X})")
 
 def normalize(text):
     return (text
@@ -144,6 +152,7 @@ def on_connect(client, userdata, flags, rc, properties=None):
     print(f"Subscribed to {MQTT_TOPIC_TEXT}")
     print(f"Subscribed to {MQTT_TOPIC_SHORTCUT}")
     print(f"Subscribed to {MQTT_TOPIC_LAYOUT}")
+
 
 def on_message(client, userdata, msg):
     print(f"RAW: topic={msg.topic} payload={msg.payload}")
@@ -173,7 +182,6 @@ def on_message(client, userdata, msg):
         type_text(payload)
 
     elif msg.topic == MQTT_TOPIC_LAYOUT:
-        global current_layout
         layout = payload.lower()
         if layout in LAYOUTS:
             current_layout = layout
