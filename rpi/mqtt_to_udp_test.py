@@ -7,10 +7,11 @@ MQTT_PORT = 1883
 MQTT_TOPIC_TEXT = "adaline/keyboard/text"
 MQTT_TOPIC_SHORTCUT = "adaline/keyboard/shortcut"
 MQTT_TOPIC_LAYOUT = "adaline/keyboard/layout"
-UDP_HOST = "192.168.1.38"
+UDP_HOST = "192.168.0.20"
 UDP_PORT = 6002
 UDP_LISTEN_PORT = 6001
-UDP_TIMEOUT = 0.01   
+MIN_SEND_INTERVAL = 0.004
+last_send_time = 0
 
 MOD_NONE  = 0x00
 MOD_CTRL  = 0x01
@@ -100,38 +101,62 @@ SPECIAL_KEYS = {
 
 udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 udp_sock.bind(("0.0.0.0", UDP_LISTEN_PORT))
-udp_sock.settimeout(UDP_TIMEOUT)
+udp_sock.settimeout(MIN_SEND_INTERVAL)
 
 seq_counter = 0
 
+def flush_socket():
+    old_timeout = udp_sock.gettimeout()
+    udp_sock.settimeout(0)  # non-blocking
+    while True:
+        try:
+            udp_sock.recvfrom(64)
+        except (socket.timeout, BlockingIOError):
+            break
+    udp_sock.settimeout(old_timeout)
+
+stats = {
+    'sent': 0,
+    'acked': 0,
+    'stale': 0,
+    'failed': 0,
+    'retried': 0
+}
 
 def send_raw_hid(modifier, keycode):
-    global seq_counter
+    global seq_counter, last_send_time
+    
+    # rate limit to Pico's processing speed
+    elapsed = time.time() - last_send_time
+    if elapsed < MIN_SEND_INTERVAL:
+        time.sleep(MIN_SEND_INTERVAL - elapsed)
+    
     seq_counter = (seq_counter + 1) % 256
-    
     packet = bytes([seq_counter, modifier, keycode])
-    print(packet)
-    retries = 3
-    
-    while retries > 0:
-        t1 = time.time()
-        udp_sock.sendto(packet, (UDP_HOST, UDP_PORT))
-        
-        try:
-            data, addr = udp_sock.recvfrom(64)
-            if data[0] == seq_counter:
-                t2 = time.time()
-                print(f"ACK received: {seq_counter} | RTT: {(t2-t1)*1000:.1f}ms")
-                return True # Transaction successful
-            else:
-                print(f"Sequence mismatch. Expected {seq_counter}, got {data[0]}")
-        except socket.timeout:
-            print(f"Timeout, retrying... ({retries} left)")
-            retries -= 1
-            
-    print("Failed to send HID report after multiple retries.")
-    return False
 
+    flush_socket()
+    stats['sent'] += 1
+
+    retries = 5  # increase retries for queue-full cases
+    while retries > 0:
+        udp_sock.sendto(packet, (UDP_HOST, UDP_PORT))
+        deadline = time.time() + 0.05
+        while time.time() < deadline:
+            try:
+                data, addr = udp_sock.recvfrom(64)
+                if data[0] == seq_counter:
+                    last_send_time = time.time()
+                    stats['acked'] += 1
+                    return True
+                else:
+                    stats['stale'] += 1
+            except socket.timeout:
+                break
+        stats['retried'] += 1
+        retries -= 1
+
+    stats['failed'] += 1
+    return False
 
 def type_text(text):
     normalized = normalize(text)
@@ -141,9 +166,10 @@ def type_text(text):
             keycode, modifier = keycodes[char]
             success = send_raw_hid(modifier, keycode)
             if not success:
-                print(f"Critical failure on char: {char}")
+                print(f"Critical failure on char: '{char}'")
         else:
             print(f"Skipping unknown character: '{char}'")
+    print(f"\nStats: {stats}")
 
 def normalize(text):
     return (text

@@ -5,6 +5,7 @@ import './App.css'
 function App() {
   const [text, setText] = useState('')
   const [connected, setConnected] = useState(false)
+  const [debugValue, setDebugValue] = useState('')
   const clientRef = useRef(null)
 
   useEffect(() => {
@@ -45,10 +46,11 @@ function App() {
         <span style={{ fontSize: '12px', color: connected ? 'green' : 'red' }}>
           {connected ? '● Connected' : '● Disconnected'}
         </span>
+        <span style={{ fontSize: '11px', color: 'gray' }}>debug: {debugValue}</span>
         <input
           type="text"
           value={text}
-          onChange={(e) => setText(e.target.value)}
+          onChange={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}
           onKeyDown={handleKeyDown}
           placeholder="Type something..."
           disabled={!connected}
@@ -59,11 +61,29 @@ function App() {
         <button onClick={sendShortcutMessage} disabled={!connected || !text}>
           Send shortcut to Pico W
         </button>
-        <button value={"GUI+R"} onClick={(e) => setText(e.target.value)}>
-          WIN + R
+        <button value={"GUI"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          WIN
         </button>
-        <button value={"ENTER"} onClick={(e) => setText(e.target.value)}>
-          ENTER
+        <button value={"ENTER"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Enter
+        </button>
+        <button value={"CTRL"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Control
+        </button>
+        <button value={"SHIFT"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Shift
+        </button>
+        <button value={"ALT"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Alt
+        </button>
+        <button value={"TAB"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Tab
+        </button>
+        <button value={"BACK"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Backspace
+        </button>
+        <button value={"FN"} onClick={(e) => { setText(e.target.value); setDebugValue(e.target.value)}}>
+          Fn
         </button>
 
       </div>

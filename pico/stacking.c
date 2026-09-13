@@ -34,13 +34,57 @@
 #define UART_TX_PIN 1
 #define UART_RX_PIN 0
 
-static struct udp_pcb *upcb;
+#define SEEN_SIZE 32
 
-static char udp_buf[256] = {0};
+#define HID_QUEUE_SIZE 32
+
+#define PACKET_TYPE_HELLO 0
+#define PACKET_TYPE_HELLO_ACK 1
+#define PACKET_TYPE_HID 2
+
+
+typedef struct {
+    uint8_t seq;
+    uint8_t modifier;
+    uint8_t keycode;
+} HidPacket;
+
+static HidPacket hid_queue[HID_QUEUE_SIZE];
+static volatile uint8_t queue_head = 0;
+static volatile uint8_t queue_tail = 0;
+
+static inline bool queue_full() {
+    return ((queue_tail + 1) % HID_QUEUE_SIZE) == queue_head;
+}
+static inline bool queue_empty() {
+    return queue_head == queue_tail;
+}
+
+static uint8_t current_seq_id = 0;
+
+static uint8_t seen_seqs[SEEN_SIZE];
+static uint8_t seen_count = 0;
+
+static bool already_seen(uint8_t seq) {
+    for (uint8_t i = 0; i < seen_count; i++) {
+        if (seen_seqs[i] == seq) return true;
+    }
+    return false;
+}
+
+static void mark_seen(uint8_t seq) {
+    if (seen_count < SEEN_SIZE) seen_count++;
+    memmove(&seen_seqs[1], &seen_seqs[0], seen_count - 1);
+    seen_seqs[0] = seq;
+}
+
+static bool msg_received_udp = false;
+
+static struct udp_pcb *upcb;
+static struct udp_pcb *discovery_upcb;
 
 static bool wifi_connected = false;
 
-static bool is_waiting_ack = false;
 
 static struct pt pt_blink;
 static struct pt pt_send;
@@ -48,14 +92,6 @@ static struct pt pt_recv;
 static struct pt pt_tud;
 static struct pt pt_hid;
 static struct pt pt_wifi_connect;
-
-static bool msg_received_hid = false;
-static bool msg_received_udp = false;
-
-static int hid_char_index = -1;  // -1 = idle, >= 0 = sending
-static bool hid_key_down = false;
-
-static uint8_t current_seq_id = 0;
 
 
 int wifi_connect_rc = -1;
@@ -67,6 +103,8 @@ enum  {
 };
  
 static uint32_t blink_interval_ms = 500;
+
+static char known_pi_ip[16] = "";
 
 //--------------------------------------------------------------------+
 // CDC Printf Implementation
@@ -113,14 +151,14 @@ static int scan_result_cb(void *env, const cyw43_ev_scan_result_t *res) {
     return 0;
 }
 
-void udp_send_message(const char *ip, int port, const void * data, int data_size) {
+void udp_send_message(const char *ip, int port, const void * data, int data_size, struct udp_pcb* pcb) {
     ip4_addr_t destAddr;
     ip4addr_aton(ip, &destAddr);
     struct pbuf *p = pbuf_alloc (PBUF_TRANSPORT, data_size, PBUF_RAM);
     if (!p) return;
     memcpy (p->payload, data, data_size);
     cyw43_arch_lwip_begin();
-    udp_sendto (upcb, p, &destAddr, port);
+    udp_sendto (pcb, p, &destAddr, port);
     cyw43_arch_lwip_end();
     pbuf_free(p);
 }
@@ -193,87 +231,93 @@ void tud_cdc_rx_cb(uint8_t itf) {
 }
 
 //--------------------------------------------------------------------+
+// Establishing ip connection
+//--------------------------------------------------------------------+
+
+void send_discovery() {
+
+    uint8_t packet[6];
+    packet[0] = PACKET_TYPE_HELLO;
+    memcpy(&packet[1], "HELLO", 5);
+    udp_send_message("255.255.255.255", DISCOVERY_PORT, packet, sizeof(packet), discovery_upcb);
+    
+};
+
+
+
+//--------------------------------------------------------------------+
 // HID Functionality
 //--------------------------------------------------------------------+
 
 
-static void send_hid_report(uint8_t report_id, const char *udp_buf, int buf_size) {
-    if (!tud_hid_ready()) return;
-
-    switch(report_id)
-    {
-        case REPORT_ID_KEYBOARD:
-        {
-            
-        }
-        break;
-        case REPORT_ID_MOUSE:
-        {          
-            // Mouse implementation if needed
-        }
-        break;
-        case REPORT_ID_CONSUMER_CONTROL:
-        {
-            // Consumer control implementation if needed
-        }
-        break;
-        case REPORT_ID_GAMEPAD:
-        {
-            // Gamepad implementation if needed
-        }
-        break;
-
-        default: break;
-    }
-}
-
 void udp_recv_message(void *arg, struct udp_pcb *pcb, struct pbuf *p, const ip_addr_t *addr, u16_t port) {
-    if (p->len >= 2) {
-        // We only need the first 2 bytes: [Modifier, Keycode]
-        memcpy(udp_buf, p->payload, 2);
-        msg_received_hid = true;
+    uint8_t* data = (uint8_t*)p->payload;
+    uint8_t type = data[0];
+
+    if (type == PACKET_TYPE_HID) {
+        if (data[1] == 0) {
+            uint8_t incoming_seq = ((uint8_t*)p->payload)[2];
+
+            if (already_seen(incoming_seq)) {
+                // it's a duplicate of something already safely queued
+                udp_send_message(known_pi_ip, SEND_PORT, &incoming_seq, 1, upcb);
+                pbuf_free(p);
+                return;
+            }
+
+            if (!queue_full()) {
+                // enqueue and mark seen only on success
+                hid_queue[queue_tail].seq      = incoming_seq;
+                hid_queue[queue_tail].modifier = ((uint8_t*)p->payload)[3];
+                hid_queue[queue_tail].keycode  = ((uint8_t*)p->payload)[4];
+                queue_tail = (queue_tail + 1) % HID_QUEUE_SIZE;
+                mark_seen(incoming_seq);  // mark AFTER enqueue
+                udp_send_message(known_pi_ip, SEND_PORT, &incoming_seq, 1, upcb);
+            }
+            
+        } else if (data[1] == 3){
+            // Adding mouse movmenent
+        }
+        // queue full: don't ACK, don't mark seen — Python will retry and it will work
+
+    } else if (type == PACKET_TYPE_HELLO_ACK) {
+        if (known_pi_ip[0] == '\0') {
+            strncpy(known_pi_ip, ip4addr_ntoa(addr), sizeof(known_pi_ip) - 1);
+            known_pi_ip[sizeof(known_pi_ip) - 1] = '\0';
+            log_printf("Pi found at %s\n", known_pi_ip);
+        }
     }
     pbuf_free(p);
-}
+};
+
 
 void hid_task(void) {
-    // interval_ms can be much lower now (e.g., 1ms or 2ms)
-    const uint32_t interval_ms = 2; 
+    const uint32_t interval_ms = 2;
     static uint32_t last_report_ms = 0;
     static bool is_pressed = false;
-
     if (board_millis() - last_report_ms < interval_ms) return;
     if (!tud_hid_ready()) return;
 
-    if (msg_received_hid && !is_pressed) {
-        // STEP 1: Send the Press
-        current_seq_id = (uint8_t)udp_buf[0];
-        uint8_t modifier = (uint8_t)udp_buf[1];
-        uint8_t keycodes[6] = { (uint8_t)udp_buf[2], 0, 0, 0, 0, 0 };
-        
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, modifier, keycodes);
-        
+    if (!is_pressed && !queue_empty()) {
+    HidPacket pkt = hid_queue[queue_head];
+    uint8_t keycodes[6] = { pkt.keycode, 0, 0, 0, 0, 0 };
+    if (tud_hid_keyboard_report(REPORT_ID_KEYBOARD, pkt.modifier, keycodes)) {
+        queue_head = (queue_head + 1) % HID_QUEUE_SIZE;  // only advance on success
+        current_seq_id = pkt.seq;
         is_pressed = true;
         last_report_ms = board_millis();
-        msg_received_hid = false; // We consumed the UDP trigger
-    } 
+    }
     else if (is_pressed) {
-        // STEP 2: Send the Release (All Zeros)
         uint8_t keycodes[6] = { 0 };
         tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycodes);
-        
         is_pressed = false;
         last_report_ms = board_millis();
-        log_printf("Sending ACK...\n");
-        is_waiting_ack = true;
+
     }
 }
 
 void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len) {
-    if (is_waiting_ack) {
-        is_waiting_ack = false;
-        udp_send_message(RECEIVER_IP, RECEIVER_PORT, &current_seq_id, 1);
-    }
+    (void) instance; (void) report; (void) len;
 }
 
 uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen) {
@@ -298,8 +342,8 @@ static PT_THREAD (protothread_udp_send(struct pt *pt)) {
     while (1) {
         PT_WAIT_UNTIL(pt, msg_received_udp);
         const char *msg = "Hello from Pico W!\n";
-        udp_send_message(RECEIVER_IP, RECEIVER_PORT, msg, strlen(msg));
-        log_printf("UDP message sent to:\nRCEIEVER_IP:%s \nRECEIVER_PORT:%d\n", RECEIVER_IP, RECEIVER_PORT);
+        udp_send_message(known_pi_ip, SEND_PORT, msg, strlen(msg), upcb);
+        log_printf("UDP message sent to:\nRCEIEVER_IP:%s \nSEND_PORT:%d\n", known_pi_ip, SEND_PORT);
         msg_received_udp = false;
         PT_YIELD(pt);
     }
@@ -310,7 +354,7 @@ static PT_THREAD (protothread_udp_recv(struct pt *pt)) {
     PT_BEGIN(pt);
     while (1) {
         cyw43_arch_poll();
-        PT_YIELD(pt);
+        PT_YIELD_usec(100);
     }
     PT_END(pt);
 }
@@ -392,20 +436,28 @@ static PT_THREAD (protothread_wifi_connect(struct pt *pt)) {
     log_printf("IP address: %s\n", ip4addr_ntoa(&ip));
 
     // Setup UDP
-    upcb = udp_new();
-    if (upcb && udp_bind(upcb, IP_ADDR_ANY, OWN_PORT) == ERR_OK) {
-        udp_recv(upcb, udp_recv_message, NULL);
-        log_printf("UDP listening on port %d\n", OWN_PORT);
+    discovery_upcb = udp_new();
+    if (discovery_upcb && udp_bind(discovery_upcb, IP_ADDR_ANY, DISCOVERY_PORT) == ERR_OK) {
+        udp_recv(discovery_upcb, udp_recv_message, NULL);
+        log_printf("UDP listening on port %d\n", DISCOVERY_PORT);
         wifi_connected = true;
-
-        udp_send_message(
-            RECEIVER_IP,
-            RECEIVER_PORT,
-            "TinyUSB HID+CDC Device Starting...\n",
-            36
-        );
+        while (known_pi_ip[0] == '\0') {
+            send_discovery();
+            for (int i = 0; i < 500; i++) {
+                cyw43_arch_poll();
+                sleep_ms(1);
+            }
+        }
     }
 
+    upcb = udp_new();
+    if (upcb && udp_bind(upcb, IP_ADDR_ANY, RECEIVER_PORT) == ERR_OK) {
+        udp_recv(upcb, udp_recv_message, NULL);
+        log_printf("UDP listening on port %d\n", RECEIVER_PORT);
+        wifi_connected = true;
+
+        
+    }
 
     while (1) PT_YIELD(pt);
     PT_END(pt);
@@ -428,6 +480,9 @@ int main()
 
     tud_init(BOARD_TUD_RHPORT);
     if (board_init_after_tusb) board_init_after_tusb();
+
+    
+    
 
     log_printf("\n\n=== Pico W Starting ===\n");
     log_printf("Starting protothreads...\n");
