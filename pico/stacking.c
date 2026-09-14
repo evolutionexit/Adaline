@@ -301,20 +301,22 @@ void hid_task(void) {
     if (!is_pressed && !queue_empty()) {
     HidPacket pkt = hid_queue[queue_head];
     uint8_t keycodes[6] = { pkt.keycode, 0, 0, 0, 0, 0 };
-    if (tud_hid_keyboard_report(REPORT_ID_KEYBOARD, pkt.modifier, keycodes)) {
-        queue_head = (queue_head + 1) % HID_QUEUE_SIZE;  // only advance on success
-        current_seq_id = pkt.seq;
-        is_pressed = true;
-        last_report_ms = board_millis();
-    }
-    else if (is_pressed) {
-        uint8_t keycodes[6] = { 0 };
-        tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycodes);
-        is_pressed = false;
-        last_report_ms = board_millis();
+        if (tud_hid_keyboard_report(REPORT_ID_KEYBOARD, pkt.modifier, keycodes)) {
+            queue_head = (queue_head + 1) % HID_QUEUE_SIZE;  // only advance on success
+            current_seq_id = pkt.seq;
+            is_pressed = true;
+            last_report_ms = board_millis();
+        }
+        else if (is_pressed) {
+            uint8_t keycodes[6] = { 0 };
+            tud_hid_keyboard_report(REPORT_ID_KEYBOARD, 0, keycodes);
+            is_pressed = false;
+            last_report_ms = board_millis();
 
+        }
     }
 }
+
 
 void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint16_t len) {
     (void) instance; (void) report; (void) len;
